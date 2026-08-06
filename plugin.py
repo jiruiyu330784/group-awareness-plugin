@@ -350,10 +350,15 @@ class GroupAwarenessPlugin(MaiBotPlugin):
                 user_id=int(user_id),
                 no_cache=True,
             )
+            self.ctx.logger.info(
+                "[群感知] 名字解析-群成员: user=%s 返回=%r", user_id, result,
+            )
             if isinstance(result, dict):
                 name = str(result.get("card") or result.get("nickname") or "").strip()
-        except Exception:
-            self.ctx.logger.debug("[群感知] 解析群成员昵称失败 (group=%s user=%s)", group_id, user_id, exc_info=True)
+        except Exception as exc:
+            self.ctx.logger.info(
+                "[群感知] 名字解析-群成员异常: user=%s err=%s", user_id, exc,
+            )
 
         if not name:
             try:
@@ -362,11 +367,20 @@ class GroupAwarenessPlugin(MaiBotPlugin):
                     user_id=int(user_id),
                     no_cache=True,
                 )
+                self.ctx.logger.info(
+                    "[群感知] 名字解析-陌生人: user=%s 返回=%r", user_id, result,
+                )
                 if isinstance(result, dict):
                     # 注意：get_stranger_info 返回的昵称字段是 nick（非 nickname）
                     name = str(result.get("nick") or result.get("nickname") or "").strip()
-            except Exception:
-                pass
+            except Exception as exc:
+                self.ctx.logger.info(
+                    "[群感知] 名字解析-陌生人异常: user=%s err=%s", user_id, exc,
+                )
+
+        self.ctx.logger.info(
+            "[群感知] 名字解析结果: group=%s user=%s name=%r", group_id, user_id, name,
+        )
 
         self._name_cache[(group_id, user_id)] = (name, time.monotonic())
         return name
