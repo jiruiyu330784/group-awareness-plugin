@@ -235,36 +235,42 @@ class GroupAwarenessPlugin(MaiBotPlugin):
     # ===== 模板与 LLM =====
 
     def _default_template_text(self, ctx: dict[str, Any]) -> str:
-        """把事件转成自然的一句话。"""
+        """把事件转成自然的一句话（带昵称与 QQ 号，便于 bot 直接回答）。"""
         event = ctx["event"]
         sub = ctx.get("sub_type", "")
         group_name = ctx.get("new_group_name") or "这个群"
         member = ctx.get("member_name") or ctx.get("user_id") or "有人"
+        member_qq = ctx.get("user_id") or ""
         operator = ctx.get("operator_name") or ctx.get("operator_id") or "有人"
+        operator_qq = ctx.get("operator_id") or ""
         duration = ctx.get("duration")
 
+        # 昵称与 QQ 号同时给出，避免 bot 需要额外查证“是谁”
+        member_desc = f"{member}（QQ {member_qq}）" if member_qq and member != member_qq else member
+        operator_desc = f"{operator}（QQ {operator_qq}）" if operator_qq and operator != operator_qq else operator
+
         if event == EVT_INCREASE:
-            return f"{member} 加入了群聊"
+            return f"{member_desc} 加入了群聊"
         if event == EVT_DECREASE:
             if sub == "kick":
-                return f"{member} 被 {operator} 移出了群聊"
-            return f"{member} 离开了群聊"
+                return f"{member_desc} 被 {operator_desc} 移出了群聊"
+            return f"{member_desc} 离开了群聊"
         if event == EVT_BAN:
             if sub == "whole_ban":
-                return f"{operator} 开启了全体禁言"
+                return f"{operator_desc} 开启了全体禁言"
             if sub == "whole_lift_ban":
                 return "群全体禁言已解除"
             if sub == "lift_ban":
-                return f"{member} 被解除禁言"
+                return f"{member_desc} 被解除禁言"
             if duration:
-                return f"{member} 被禁言了 {duration} 秒"
-            return f"{member} 被禁言了"
+                return f"{member_desc} 被禁言了 {duration} 秒"
+            return f"{member_desc} 被禁言了"
         if event == EVT_GROUP_NAME:
-            return f"{operator} 修改了群名称"
+            return f"{operator_desc} 修改了群名称"
         if event == EVT_ADMIN:
             if sub == "unset":
-                return f"{member} 被取消管理员"
-            return f"{member} 被设为管理员"
+                return f"{member_desc} 被取消管理员"
+            return f"{member_desc} 被设为管理员"
         return f"[群事件] {event}.{sub}"
 
     def _render_template(self, template: str, ctx: dict[str, Any]) -> str:
