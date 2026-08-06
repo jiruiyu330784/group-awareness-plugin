@@ -245,9 +245,9 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         operator_qq = ctx.get("operator_id") or ""
         duration = ctx.get("duration")
 
-        # 昵称与 QQ 号同时给出，避免 bot 需要额外查证“是谁”
-        member_desc = f"{member}（QQ {member_qq}）" if member_qq and member != member_qq else member
-        operator_desc = f"{operator}（QQ {operator_qq}）" if operator_qq and operator != operator_qq else operator
+        # 昵称与 QQ 号同时给出，且带明确标记，避免 bot 把奇怪昵称（如日志样式）当噪音忽略
+        member_desc = f"昵称「{member}」（QQ {member_qq}）" if member_qq and member != member_qq else member
+        operator_desc = f"昵称「{operator}」（QQ {operator_qq}）" if operator_qq and operator != operator_qq else operator
 
         if event == EVT_INCREASE:
             return f"{member_desc} 加入了群聊"
