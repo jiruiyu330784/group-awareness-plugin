@@ -363,7 +363,8 @@ class GroupAwarenessPlugin(MaiBotPlugin):
                     no_cache=True,
                 )
                 if isinstance(result, dict):
-                    name = str(result.get("nickname") or "").strip()
+                    # 注意：get_stranger_info 返回的昵称字段是 nick（非 nickname）
+                    name = str(result.get("nick") or result.get("nickname") or "").strip()
             except Exception:
                 pass
 
