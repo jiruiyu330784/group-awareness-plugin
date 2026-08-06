@@ -1,0 +1,45 @@
+{
+  "manifest_version": 2,
+  "version": "0.1.0",
+  "name": "麦麦看到你了！",
+  "description": "感知群人员变动事件（进群/退群/禁言/群名/管理变动），按事件类型可选固定模板/人格化LLM/注入上下文三种处理；并提供群荣誉、群员称号、群头像、群公告、禁言列表等工具化查询能力。麦麦看到你了！",
+  "author": {
+    "name": "ji-or-ji",
+    "url": "https://github.com/jiruiyu330784"
+  },
+  "license": "MIT",
+  "urls": {
+    "repository": "https://github.com/jiruiyu330784/group-awareness-plugin",
+    "homepage": "https://github.com/jiruiyu330784/group-awareness-plugin",
+    "documentation": "https://github.com/jiruiyu330784/group-awareness-plugin/blob/main/README.md",
+    "issues": "https://github.com/jiruiyu330784/group-awareness-plugin/issues"
+  },
+  "host_application": {
+    "min_version": "1.0.0",
+    "max_version": "1.99.99"
+  },
+  "sdk": {
+    "min_version": "2.0.0",
+    "max_version": "2.99.99"
+  },
+  "dependencies": [],
+  "plugin_type": "extension",
+  "capabilities": [
+    "send.text",
+    "api.call",
+    "chat.get_stream_by_group_id",
+    "chat.get_stream_by_user_id",
+    "chat.open_session",
+    "maisaka.context.append",
+    "llm.generate",
+    "config.get"
+  ],
+  "i18n": {
+    "default_locale": "zh-CN",
+    "locales_path": "_locales",
+    "supported_locales": [
+      "zh-CN"
+    ]
+  },
+  "id": "group-awareness-plugin"
+}
