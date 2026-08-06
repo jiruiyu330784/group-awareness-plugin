@@ -200,7 +200,10 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         event_text = self._default_template_text(ctx)
         stream_id = await self.resolve_stream_id_for_group(ctx["group_id"])
         if not stream_id:
-            self.ctx.logger.debug("[群感知] 无法解析 stream_id，跳过上下文注入 (group=%s)", ctx["group_id"])
+            self.ctx.logger.warning(
+                "[群感知] 无法解析 stream_id，上下文注入被跳过 (group=%s, event=%s)",
+                ctx["group_id"], ctx["event"],
+            )
             return
         try:
             resp = await self.ctx.maisaka.context.append(
@@ -208,6 +211,9 @@ class GroupAwarenessPlugin(MaiBotPlugin):
                 segments=[{"type": "text", "content": event_text}],
                 visible_text=event_text,
                 source_kind=f"plugin:group_awareness:{ctx['event']}",
+            )
+            self.ctx.logger.info(
+                "[群感知] 上下文注入完成: %r (group=%s)", event_text, ctx["group_id"],
             )
             if isinstance(resp, dict) and resp.get("success") is False:
                 self.ctx.logger.warning("[群感知] 上下文注入业务失败: %s", resp.get("error"))
@@ -401,7 +407,10 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         try:
             stream = await self.ctx.chat.get_stream_by_group_id(group_id, platform="qq")
             if isinstance(stream, dict):
-                stream_id = str(stream.get("session_id") or stream.get("stream_id") or "")
+                # 兼容 Host 返回的多种流字段名（session_id / stream_id / id）
+                stream_id = str(
+                    stream.get("session_id") or stream.get("stream_id") or stream.get("id") or ""
+                )
         except Exception:
             self.ctx.logger.debug("[群感知] get_stream_by_group_id 失败 (group=%s)", group_id, exc_info=True)
 
@@ -411,7 +420,9 @@ class GroupAwarenessPlugin(MaiBotPlugin):
                     platform="qq", chat_type="group", group_id=group_id,
                 )
                 if isinstance(result, dict) and result.get("success") is not False:
-                    stream_id = str(result.get("session_id") or result.get("stream_id") or "")
+                    stream_id = str(
+                        result.get("session_id") or result.get("stream_id") or result.get("id") or ""
+                    )
             except Exception:
                 self.ctx.logger.debug("[群感知] open_session 失败 (group=%s)", group_id, exc_info=True)
 
