@@ -92,6 +92,12 @@ class GroupAwarenessPlugin(MaiBotPlugin):
             )
             return None
 
+        # 解析成员/操作者名字（填充 member_name / operator_name 供模板与上下文使用）
+        if ctx.get("user_id"):
+            ctx["member_name"] = await self.resolve_member_name(ctx["group_id"], ctx["user_id"])
+        if ctx.get("operator_id") and ctx["operator_id"] != ctx.get("user_id"):
+            ctx["operator_name"] = await self.resolve_member_name(ctx["group_id"], ctx["operator_id"])
+
         # 自身禁言特殊处理
         if ctx["event"] == EVT_BAN and ctx.get("target_is_self"):
             await self._handle_self_ban(ctx)
