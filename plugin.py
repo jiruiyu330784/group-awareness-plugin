@@ -94,7 +94,11 @@ class GroupAwarenessPlugin(MaiBotPlugin):
 
         # 解析成员/操作者名字（填充 member_name / operator_name 供模板与上下文使用）
         if ctx.get("user_id"):
-            ctx["member_name"] = await self.resolve_member_name(ctx["group_id"], ctx["user_id"])
+            # 退群事件成员已不在群，get_group_member_info 必然失败（会打错误日志），直接走陌生人接口
+            if ctx["event"] == EVT_DECREASE:
+                ctx["member_name"] = await self.resolve_member_name_stranger(ctx["user_id"])
+            else:
+                ctx["member_name"] = await self.resolve_member_name(ctx["group_id"], ctx["user_id"])
         if ctx.get("operator_id") and ctx["operator_id"] != ctx.get("user_id"):
             ctx["operator_name"] = await self.resolve_member_name(ctx["group_id"], ctx["operator_id"])
 
@@ -349,6 +353,26 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         return cfg
 
     # ===== 名称 / stream 解析（带 TTL 缓存）=====
+
+    async def resolve_member_name_stranger(self, user_id: str) -> str:
+        """只用陌生人接口解析昵称（退群事件专用：成员已不在群，群成员接口必失败）。"""
+        name = ""
+        try:
+            result = await self.ctx.api.call(
+                "adapter.napcat.account.get_stranger_info",
+                user_id=int(user_id),
+                no_cache=True,
+            )
+            self.ctx.logger.info(
+                "[群感知] 名字解析-陌生人(退群): user=%s 返回=%r", user_id, result,
+            )
+            if isinstance(result, dict):
+                name = str(result.get("nick") or result.get("nickname") or "").strip()
+        except Exception as exc:
+            self.ctx.logger.info(
+                "[群感知] 名字解析-陌生人异常: user=%s err=%s", user_id, exc,
+            )
+        return name
 
     async def resolve_member_name(self, group_id: str, user_id: str) -> str:
         """解析群成员昵称：群名片优先于昵称；带 TTL 缓存与负缓存。"""
