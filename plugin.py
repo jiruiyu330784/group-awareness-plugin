@@ -206,8 +206,8 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         await self._send_to_group(ctx["group_id"], text)
 
     async def _handle_context(self, ctx: dict[str, Any]) -> None:
-        """仅将事件注入聊天上下文（bot 感知但不主动发言）。"""
-        event_text = self._default_template_text(ctx)
+        """仅将事件注入聊天上下文（匿名，bot 感知但不接触具体身份）。"""
+        event_text = self._anonymous_event_text(ctx)
         stream_id = await self.resolve_stream_id_for_group(ctx["group_id"])
         if not stream_id:
             self.ctx.logger.warning(
@@ -243,6 +243,40 @@ class GroupAwarenessPlugin(MaiBotPlugin):
             self.ctx.logger.info("[群感知] bot 被禁言，mode=none 不处理")
 
     # ===== 模板与 LLM =====
+
+    def _anonymous_event_text(self, ctx: dict[str, Any]) -> str:
+        """把事件转成不包含具体身份的轻量文本（供 context 模式注入）。
+
+        身份识别交给 get_group_member_changes 工具，避免 bot 从注入文本里
+        读到名字后答错人。
+        """
+        event = ctx["event"]
+        sub = ctx.get("sub_type", "")
+        duration = ctx.get("duration")
+
+        if event == EVT_INCREASE:
+            return "有人加入了群聊"
+        if event == EVT_DECREASE:
+            if sub == "kick":
+                return "有人被移出了群聊"
+            return "有人离开了群聊"
+        if event == EVT_BAN:
+            if sub == "whole_ban":
+                return "群开启了全体禁言"
+            if sub == "whole_lift_ban":
+                return "群全体禁言已解除"
+            if sub == "lift_ban":
+                return "有人被解除禁言"
+            if duration:
+                return f"有人被禁言了 {duration} 秒"
+            return "有人被禁言了"
+        if event == EVT_GROUP_NAME:
+            return "群名称被修改了"
+        if event == EVT_ADMIN:
+            if sub == "unset":
+                return "有人被取消管理员"
+            return "有人被设为管理员"
+        return f"[群事件] {event}.{sub}"
 
     def _default_template_text(self, ctx: dict[str, Any]) -> str:
         """把事件转成自然的一句话（带昵称与 QQ 号，便于 bot 直接回答）。"""
