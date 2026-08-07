@@ -659,7 +659,7 @@ class GroupAwarenessPlugin(MaiBotPlugin):
                     )
                     self._probation_remove(group_id, user_id)
                     continue
-                data = result.get("data") if isinstance(result, dict) else None
+                data = result if isinstance(result, dict) else None
                 if not isinstance(data, dict):
                     self._probation_remove(group_id, user_id)
                     continue
@@ -702,8 +702,7 @@ class GroupAwarenessPlugin(MaiBotPlugin):
             try:
                 await self.ctx.api.call(
                     "adapter.napcat.group.send_group_msg",
-                    group_id=int(group_id),
-                    message=[{"type": "text", "data": {"text": text}}],
+                    params={"group_id": int(group_id), "message": [{"type": "text", "data": {"text": text}}]},
                 )
             except Exception as exc:
                 self.ctx.logger.info("[考察期] 移出说明发送失败: %s", exc)
@@ -758,11 +757,9 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         try:
             await self.ctx.api.call(
                 "adapter.napcat.group.send_group_msg",
-                group_id=int(group_id),
-                message=[
-                    {"type": "at", "data": {"qq": user_id}},
+                params={"group_id": int(group_id), "message": [{"type": "at", "data": {"qq": user_id}},
                     {"type": "text", "data": {"text": text}},
-                ],
+                ]},
             )
             return True
         except Exception as exc:
@@ -849,7 +846,7 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         try:
             result = await self.ctx.api.call(
                 "adapter.napcat.group.get_essence_msg_list",
-                group_id=int(group_id),
+                params={"group_id": int(group_id)},
             )
         except Exception as e:
             return {"success": False, "reason": str(e)}
@@ -931,8 +928,7 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         try:
             result = await self.ctx.api.call(
                 "adapter.napcat.group.get_group_honor_info",
-                group_id=int(group_id),
-                type="all",
+                params={"group_id": int(group_id), "type": "all"},
             )
         except Exception as e:
             return {"success": False, "reason": str(e)}
@@ -1030,7 +1026,7 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         try:
             result = await self.ctx.api.call(
                 "adapter.napcat.group.get_group_notice",
-                group_id=int(group_id),
+                params={"group_id": int(group_id)},
             )
         except Exception as e:
             return {"success": False, "reason": str(e)}
@@ -1068,7 +1064,7 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         try:
             result = await self.ctx.api.call(
                 "adapter.napcat.group.get_group_shut_list",
-                group_id=int(group_id),
+                params={"group_id": int(group_id)},
             )
         except Exception as e:
             return {"success": False, "reason": str(e)}
