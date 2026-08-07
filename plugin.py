@@ -18,6 +18,7 @@ import asyncio
 import json
 import random
 import time
+import tomllib
 from pathlib import Path
 from typing import Any, Optional
 
@@ -25,7 +26,7 @@ from maibot_sdk import HookHandler, MaiBotPlugin
 from maibot_sdk.components import Tool, ToolParameterInfo
 from maibot_sdk.types import ErrorPolicy, HookMode, HookOrder, ToolParamType
 
-from .config import GroupAwarenessConfig
+from .config import GroupAwarenessConfig, ProbationConfig
 
 # 事件类型常量（与 napcat notice_type/sub_type 对应）
 EVT_INCREASE = "group_increase"
@@ -61,18 +62,30 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         self._probation: dict[str, dict[str, dict[str, Any]]] = {}
         self._probation_file: Path | None = None
         self._probation_task: asyncio.Task | None = None
+        # 外部考察期配置（来自「麦麦喊新人说话！」插件的 config.toml），存在时优先使用
+        self._external_probation_cfg: Any = None
+
+    @property
+    def _probation_cfg(self) -> Any:
+        """考察期配置：外部（麦麦喊新人说话！）优先，否则用自身配置。"""
+        return self._external_probation_cfg or self.config.probation
 
     # ===== 生命周期 =====
 
     async def on_load(self) -> None:
         self._probation_file = Path(self.ctx.paths.data_dir) / "probation.json"
         self._probation_load()
-        if self.config.probation.enabled:
+        # 联动：若「麦麦喊新人说话！」插件存在，考察期配置以它为准（只维护一份配置）
+        sibling_cfg = self._read_sibling_probation_config()
+        if sibling_cfg is not None:
+            self._external_probation_cfg = sibling_cfg
+            self.ctx.logger.info("[考察期] 检测到「麦麦喊新人说话！」，使用其考察期配置")
+        if self._probation_cfg.enabled:
             self._probation_task = asyncio.create_task(
                 self._probation_loop(), name="group-awareness.probation",
             )
         self.ctx.logger.info(
-            "群感知插件已加载（考察期=%s）", "开" if self.config.probation.enabled else "关",
+            "群感知插件已加载（考察期=%s）", "开" if self._probation_cfg.enabled else "关",
         )
 
     async def on_unload(self) -> None:
@@ -83,18 +96,46 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         self.ctx.logger.info("群感知插件已卸载")
 
     async def on_config_update(self, scope: str, config_data: dict, version: str) -> None:
+        # 联动：配置热更新时重新探测外部配置
+        sibling_cfg = self._read_sibling_probation_config()
+        if sibling_cfg is not None:
+            self._external_probation_cfg = sibling_cfg
         # 考察期开关变化时同步启停周期任务
         if self._probation_task:
             self._probation_task.cancel()
             self._probation_task = None
-        if self.config.probation.enabled:
+        if self._probation_cfg.enabled:
             self._probation_task = asyncio.create_task(
                 self._probation_loop(), name="group-awareness.probation",
             )
         self.ctx.logger.info(
             "群感知插件配置已热更新: scope=%s（考察期=%s）",
-            scope, "开" if self.config.probation.enabled else "关",
+            scope, "开" if self._probation_cfg.enabled else "关",
         )
+
+    def _read_sibling_probation_config(self) -> Any:
+        """读取「麦麦喊新人说话！」(group-probation-plugin) 的考察期配置。
+
+        存在且解析成功时返回 ProbationConfig 实例（联动时配置只维护一份）；
+        不存在或解析失败返回 None（回退用自身配置）。
+        """
+        try:
+            sibling_cfg = (
+                Path(__file__).resolve().parents[1]
+                / "group-probation-plugin"
+                / "config.toml"
+            )
+            if not sibling_cfg.exists():
+                return None
+            with open(sibling_cfg, "rb") as f:
+                data = tomllib.load(f)
+            section = data.get("probation")
+            if not isinstance(section, dict):
+                return None
+            return ProbationConfig(**section)
+        except Exception as exc:
+            self.ctx.logger.debug("[考察期] 读取兄弟配置失败: %s", exc)
+            return None
 
     # ===== 事件处理 Hook =====
 
@@ -138,7 +179,7 @@ class GroupAwarenessPlugin(MaiBotPlugin):
             self._record_change(ctx)
 
         # 考察期：新人进群 → 加入考察名单 + @ 欢迎（身份感知不影响）
-        if self.config.probation.enabled and ctx["event"] == EVT_INCREASE:
+        if self._probation_cfg.enabled and ctx["event"] == EVT_INCREASE:
             await self._handle_probation_join(ctx)
 
         # 自身禁言特殊处理
@@ -555,7 +596,7 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         user_id = ctx.get("user_id") or ""
         if not user_id:
             return
-        cfg = self.config.probation
+        cfg = self._probation_cfg
         member_name = ctx.get("member_name") or user_id
 
         self._probation.setdefault(ctx["group_id"], {})[user_id] = {
@@ -580,7 +621,7 @@ class GroupAwarenessPlugin(MaiBotPlugin):
 
     async def _probation_loop(self) -> None:
         """周期检查考察名单（超时未发言者移出）。"""
-        interval = max(1, self.config.probation.check_interval_minutes) * 60
+        interval = max(1, self._probation_cfg.check_interval_minutes) * 60
         while True:
             await asyncio.sleep(interval)
             try:
@@ -590,7 +631,7 @@ class GroupAwarenessPlugin(MaiBotPlugin):
 
     async def _check_probation(self) -> None:
         """遍历考察名单：转正（已发言）、排除（管理员/白名单/已退群）、移出（超时未发言）。"""
-        cfg = self.config.probation
+        cfg = self._probation_cfg
         if not cfg.enabled:
             return
         whitelist = set(cfg.whitelist)
@@ -640,7 +681,7 @@ class GroupAwarenessPlugin(MaiBotPlugin):
 
     async def _kick_member(self, group_id: str, user_id: str, entry: dict[str, Any]) -> None:
         """移出超时未发言成员，并发送移出说明。"""
-        cfg = self.config.probation
+        cfg = self._probation_cfg
         try:
             await self.ctx.api.call(
                 "adapter.napcat.group.set_group_kick",
@@ -669,7 +710,7 @@ class GroupAwarenessPlugin(MaiBotPlugin):
 
     async def _compose_kick_text(self, group_id: str, user_id: str, entry: dict[str, Any]) -> str:
         """按配置生成移出说明（llm 优先，失败回退模板）。"""
-        cfg = self.config.probation
+        cfg = self._probation_cfg
         text = ""
         if cfg.kick_message.mode == "llm":
             text = await self._generate_text(
@@ -687,7 +728,7 @@ class GroupAwarenessPlugin(MaiBotPlugin):
 
     async def _generate_text(self, user_prompt: str) -> str:
         """按考察期 llm 槽位生成一句话（失败返回空串，调用方回退模板）。"""
-        cfg = self.config.probation.llm
+        cfg = self._probation_cfg.llm
         persona = await self._resolve_persona()
         system = (
             f"{persona}\n\n"
