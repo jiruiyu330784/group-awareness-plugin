@@ -49,10 +49,12 @@ whitelist = []
 
 [probation.greet]
 mode = "template"
+fallback_to_template = true
 template = "欢迎新朋友加入～出来冒个泡认识一下？"
 
 [probation.kick_message]
 mode = "template"
+fallback_to_template = true
 template = "成员 {member_name}（QQ {user_id}）加入超过 {probation_hours} 小时未发言，已移出群聊。"
 
 [probation.llm]

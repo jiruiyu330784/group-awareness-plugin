@@ -612,9 +612,10 @@ class GroupAwarenessPlugin(MaiBotPlugin):
                 "请以你的性格自然地欢迎 TA，并邀请 TA 出来说句话冒个泡。"
                 "简短、口语化，只输出要说的话。"
             )
-        if not text:
+        if not text and cfg.greet.fallback_to_template:
             text = cfg.greet.template or "欢迎新朋友加入～"
-        await self._send_at_message(ctx["group_id"], user_id, text)
+        if text:
+            await self._send_at_message(ctx["group_id"], user_id, text)
         self.ctx.logger.info(
             "[考察期] 新人 %s(%s) 加入考察名单，欢迎已发送", member_name, user_id,
         )
@@ -718,7 +719,7 @@ class GroupAwarenessPlugin(MaiBotPlugin):
                 f"{cfg.probation_hours} 小时未发言，已被移出群聊。"
                 "请以你的性格自然地说明这件事（要包含被移出者的 QQ 号），简短，只输出要说的话。"
             )
-        if not text:
+        if not text and cfg.kick_message.fallback_to_template:
             text = (cfg.kick_message.template or "").replace(
                 "{member_name}", entry.get("member_name") or user_id,
             ).replace("{user_id}", user_id).replace(

@@ -209,9 +209,14 @@ class GreetConfig(PluginConfigBase):
         description="欢迎方式：template=固定模板；llm=按人设生成（有 API 费用）",
         json_schema_extra={"label": "欢迎方式", "hint": "template / llm"},
     )
+    fallback_to_template: bool = Field(
+        default=True,
+        description="llm 模式生成失败时降级用固定模板；关闭则失败时不发送欢迎",
+        json_schema_extra={"label": "失败降级模板"},
+    )
     template: str = Field(
         default="欢迎新朋友加入～出来冒个泡认识一下？",
-        description="mode=template 时的欢迎文案（自动 @ 新人）",
+        description="mode=template 时的欢迎文案，或 llm 失败降级时的文案（自动 @ 新人）",
         json_schema_extra={"label": "固定文案", "placeholder": "欢迎新朋友加入～"},
     )
 
@@ -235,11 +240,16 @@ class KickMessageConfig(PluginConfigBase):
         description="移出说明方式：template=固定模板；llm=按人设生成（有 API 费用）",
         json_schema_extra={"label": "说明方式", "hint": "template / llm"},
     )
+    fallback_to_template: bool = Field(
+        default=True,
+        description="llm 模式生成失败时降级用固定模板；关闭则失败时不发送说明（移出照常执行）",
+        json_schema_extra={"label": "失败降级模板"},
+    )
     template: str = Field(
         default="成员 {member_name}（QQ {user_id}）加入超过 {probation_hours} 小时未发言，已移出群聊。",
         description=(
-            "mode=template 时的说明文案。占位符：{member_name} 昵称；{user_id} 被移出者 QQ；"
-            "{probation_hours} 考察时长（小时）"
+            "mode=template 时的说明文案，或 llm 失败降级时的文案。占位符："
+            "{member_name} 昵称；{user_id} 被移出者 QQ；{probation_hours} 考察时长（小时）"
         ),
         json_schema_extra={"label": "固定文案"},
     )
