@@ -53,6 +53,8 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         self._name_cache: dict[tuple[str, str], tuple[str, float]] = {}
         self._stream_cache: dict[str, tuple[str, float]] = {}
         self._self_id = ""
+        # 群成员变动日志：{group_id: [{type, user_id, nickname, ts}]}，供查询工具读取后清空
+        self._pending_changes: dict[str, list[dict[str, Any]]] = {}
 
     # ===== 生命周期 =====
 
@@ -101,6 +103,10 @@ class GroupAwarenessPlugin(MaiBotPlugin):
                 ctx["member_name"] = await self.resolve_member_name(ctx["group_id"], ctx["user_id"])
         if ctx.get("operator_id") and ctx["operator_id"] != ctx.get("user_id"):
             ctx["operator_name"] = await self.resolve_member_name(ctx["group_id"], ctx["operator_id"])
+
+        # 记录成员变动日志（供 get_group_member_changes 工具查询）
+        if self.config.plugin.record_changes and ctx["event"] in (EVT_INCREASE, EVT_DECREASE):
+            self._record_change(ctx)
 
         # 自身禁言特殊处理
         if ctx["event"] == EVT_BAN and ctx.get("target_is_self"):
@@ -348,6 +354,21 @@ class GroupAwarenessPlugin(MaiBotPlugin):
             return False
         return True
 
+    def _record_change(self, ctx: dict[str, Any]) -> None:
+        """把一次进群/退群事件记入该群的变动日志。"""
+        group_id = ctx["group_id"]
+        entry = {
+            "type": "join" if ctx["event"] == EVT_INCREASE else "leave",
+            "user_id": ctx.get("user_id") or "",
+            "nickname": ctx.get("member_name") or "",
+            "ts": int(time.time()),
+        }
+        self._pending_changes.setdefault(group_id, []).append(entry)
+        self.ctx.logger.info(
+            "[群感知] 变动已记录: %s %s(%s) in %s",
+            entry["type"], entry["nickname"] or entry["user_id"], entry["user_id"], group_id,
+        )
+
     def _event_config(self, event: str) -> Any:
         cfg = getattr(self.config.events, event, None)
         return cfg
@@ -491,6 +512,43 @@ class GroupAwarenessPlugin(MaiBotPlugin):
             return False
 
     # ===== 工具化查询 =====
+
+    @Tool(
+        "get_group_member_changes",
+        description="查询群成员变动（自上次查询以来的新加入/退出成员）",
+        brief_description="查询群成员变动",
+        detailed_description=(
+            "当用户询问群里最近谁加入/退出了、有哪些新成员、谁退群了时调用。"
+            "返回该群自上次查询以来的成员变动（新加入和退出，含昵称与 QQ 号），"
+            "查询后已返回的变动会被清空，下次只返回新的变动。"
+        ),
+        parameters=[
+            ToolParameterInfo(
+                name="group_id", param_type=ToolParamType.STRING,
+                description="目标群号", required=True,
+            ),
+        ],
+    )
+    async def get_group_member_changes(self, group_id: str, **kwargs) -> dict[str, Any]:
+        """返回自上次查询以来的群成员变动，并清空。"""
+        changes = self._pending_changes.pop(group_id, [])
+        joins = [c for c in changes if c["type"] == "join"]
+        leaves = [c for c in changes if c["type"] == "leave"]
+
+        def fmt(items: list[dict]) -> str:
+            return "、".join(
+                f"昵称「{c['nickname'] or c['user_id']}」（QQ {c['user_id']}）" for c in items
+            ) or "无"
+
+        if not changes:
+            return {"success": True, "result": f"群 {group_id} 自上次查询以来没有成员变动。"}
+
+        result = (
+            f"群 {group_id} 自上次查询以来的成员变动：\n"
+            f"- 新加入：{fmt(joins)}\n"
+            f"- 退出：{fmt(leaves)}"
+        )
+        return {"success": True, "result": result}
 
     @Tool(
         "get_group_honor",

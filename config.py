@@ -36,6 +36,11 @@ class PluginSectionConfig(PluginConfigBase):
         description="是否启用插件",
         json_schema_extra={"label": "启用插件"},
     )
+    record_changes: bool = Field(
+        default=True,
+        description="记录群成员变动日志（进群/退群），供 get_group_member_changes 工具查询；关闭后工具返回空",
+        json_schema_extra={"label": "记录成员变动", "hint": "关闭后 get_group_member_changes 工具无数据"},
+    )
     config_version: str = Field(
         default="1.0.0",
         description="配置版本",

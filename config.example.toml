@@ -1,52 +1,42 @@
-# ================= 麦麦看到你了！(群感知) 插件配置示例 =================
-# 复制为 config.toml 后按需修改；不复制则使用代码内默认值。
-
 [plugin]
-enabled = true               # 总开关
-config_version = "1.0.0"     # 配置版本，不要改
+enabled = true
+config_version = "1.0.0"
 
 [scope]
-whitelist = []               # 群白名单（群号），留空 = 全部群生效
-blacklist = []               # 群黑名单（群号），优先于白名单
+whitelist = []
+blacklist = []
 
-# ---- 事件处理方式说明 ----
-# mode 可选：
-#   template  发送固定模板文案（文案填各事件下方的 template 字段）
-#   llm       用全局人设生成自然回应并发送（走 planner 槽位，有 API 费用）
-#   context   仅注入聊天上下文，bot 感知但不主动发言（零费用）
-# template 占位符：{group_name} {member_name} {operator_name} {target_name} {duration}
-
-[events.group_increase]      # 进群
+[events.group_increase]
 enabled = true
-mode = "context"             # 感知模式：只注入上下文，不主动发言
-# 切到 template 模式时使用下面的文案；llm 模式下忽略
+mode = "context"
 template = "欢迎 {member_name} 加入 {group_name}！"
 
-[events.group_decrease]      # 退群
+[events.group_decrease]
 enabled = true
 mode = "context"
 template = ""
 
-[events.group_ban]           # 禁言/解禁
+[events.group_ban]
 enabled = true
 mode = "context"
 template = ""
 
-[events.group_name]          # 群名变动
+[events.group_name]
 enabled = true
 mode = "context"
 template = ""
 
-[events.group_admin]         # 管理员变动
+[events.group_admin]
 enabled = true
 mode = "context"
 template = ""
 
-[self_ban]                   # bot 自己被禁言时的行为
-mode = "none"                # notify_admin（私聊通知管理员）/ context（注入上下文）/ none（不处理）
-admin_qqs = []               # notify_admin 模式下的管理员 QQ 列表
+[self_ban]
+mode = "context"
+admin_qqs = []
 
-[llm]                        # 人格化回复参数
-model = "planner"            # 任务槽位：utils / replyer / planner
-temperature = 1.0            # 生成温度
-max_tokens = 0               # 最大 token，0 = 用 Host 默认
+[llm]
+model = "planner"
+temperature = 1
+max_tokens = 0
+
