@@ -40,3 +40,23 @@ model = "planner"
 temperature = 1
 max_tokens = 0
 
+[probation]
+enabled = false
+probation_hours = 48
+check_interval_minutes = 30
+reject_add_request = false
+whitelist = []
+
+[probation.greet]
+mode = "template"
+template = "欢迎新朋友加入～出来冒个泡认识一下？"
+
+[probation.kick_message]
+mode = "template"
+template = "成员 {member_name}（QQ {user_id}）加入超过 {probation_hours} 小时未发言，已移出群聊。"
+
+[probation.llm]
+model = "planner"
+temperature = 0.8
+max_tokens = 128
+

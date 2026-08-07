@@ -15,8 +15,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 from maibot_sdk import HookHandler, MaiBotPlugin
@@ -55,17 +57,44 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         self._self_id = ""
         # 群成员变动日志：{group_id: [{type, user_id, nickname, ts}]}，供查询工具读取后清空
         self._pending_changes: dict[str, list[dict[str, Any]]] = {}
+        # 考察期：{group_id: {user_id: {join_ts, member_name}}}，持久化到 data 目录
+        self._probation: dict[str, dict[str, dict[str, Any]]] = {}
+        self._probation_file: Path | None = None
+        self._probation_task: asyncio.Task | None = None
 
     # ===== 生命周期 =====
 
     async def on_load(self) -> None:
-        self.ctx.logger.info("群感知插件已加载")
+        self._probation_file = Path(self.ctx.paths.data_dir) / "probation.json"
+        self._probation_load()
+        if self.config.probation.enabled:
+            self._probation_task = asyncio.create_task(
+                self._probation_loop(), name="group-awareness.probation",
+            )
+        self.ctx.logger.info(
+            "群感知插件已加载（考察期=%s）", "开" if self.config.probation.enabled else "关",
+        )
 
     async def on_unload(self) -> None:
+        if self._probation_task:
+            self._probation_task.cancel()
+            self._probation_task = None
+        self._probation_persist()
         self.ctx.logger.info("群感知插件已卸载")
 
     async def on_config_update(self, scope: str, config_data: dict, version: str) -> None:
-        self.ctx.logger.info("群感知插件配置已热更新: scope=%s", scope)
+        # 考察期开关变化时同步启停周期任务
+        if self._probation_task:
+            self._probation_task.cancel()
+            self._probation_task = None
+        if self.config.probation.enabled:
+            self._probation_task = asyncio.create_task(
+                self._probation_loop(), name="group-awareness.probation",
+            )
+        self.ctx.logger.info(
+            "群感知插件配置已热更新: scope=%s（考察期=%s）",
+            scope, "开" if self.config.probation.enabled else "关",
+        )
 
     # ===== 事件处理 Hook =====
 
@@ -107,6 +136,10 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         # 记录成员变动日志（供 get_group_member_changes 工具查询）
         if self.config.plugin.record_changes and ctx["event"] in (EVT_INCREASE, EVT_DECREASE):
             self._record_change(ctx)
+
+        # 考察期：新人进群 → 加入考察名单 + @ 欢迎（身份感知不影响）
+        if self.config.probation.enabled and ctx["event"] == EVT_INCREASE:
+            await self._handle_probation_join(ctx)
 
         # 自身禁言特殊处理
         if ctx["event"] == EVT_BAN and ctx.get("target_is_self"):
@@ -514,6 +547,215 @@ class GroupAwarenessPlugin(MaiBotPlugin):
         if stream_id:
             self._stream_cache[group_id] = (stream_id, time.monotonic())
         return stream_id
+
+    # ===== 考察期（probation）=====
+
+    async def _handle_probation_join(self, ctx: dict[str, Any]) -> None:
+        """新人进群：加入考察名单并发送 @ 欢迎。"""
+        user_id = ctx.get("user_id") or ""
+        if not user_id:
+            return
+        cfg = self.config.probation
+        member_name = ctx.get("member_name") or user_id
+
+        self._probation.setdefault(ctx["group_id"], {})[user_id] = {
+            "join_ts": time.time(),
+            "member_name": member_name,
+        }
+        self._probation_persist()
+
+        text = ""
+        if cfg.greet.mode == "llm":
+            text = await self._generate_text(
+                f"QQ 群里刚有新成员加入：{member_name}（QQ {user_id}）。"
+                "请以你的性格自然地欢迎 TA，并邀请 TA 出来说句话冒个泡。"
+                "简短、口语化，只输出要说的话。"
+            )
+        if not text:
+            text = cfg.greet.template or "欢迎新朋友加入～"
+        await self._send_at_message(ctx["group_id"], user_id, text)
+        self.ctx.logger.info(
+            "[考察期] 新人 %s(%s) 加入考察名单，欢迎已发送", member_name, user_id,
+        )
+
+    async def _probation_loop(self) -> None:
+        """周期检查考察名单（超时未发言者移出）。"""
+        interval = max(1, self.config.probation.check_interval_minutes) * 60
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self._check_probation()
+            except Exception as exc:
+                self.ctx.logger.info("[考察期] 检查异常: %s", exc, exc_info=True)
+
+    async def _check_probation(self) -> None:
+        """遍历考察名单：转正（已发言）、排除（管理员/白名单/已退群）、移出（超时未发言）。"""
+        cfg = self.config.probation
+        if not cfg.enabled:
+            return
+        whitelist = set(cfg.whitelist)
+        now = time.time()
+        probation_seconds = float(cfg.probation_hours) * 3600
+
+        for group_id, members in list(self._probation.items()):
+            for user_id, entry in list(members.items()):
+                # 白名单跳过
+                if user_id in whitelist:
+                    self._probation_remove(group_id, user_id)
+                    continue
+                # 查询成员状态
+                try:
+                    result = await self.ctx.api.call(
+                        "adapter.napcat.group.get_group_member_info",
+                        group_id=int(group_id),
+                        user_id=int(user_id),
+                    )
+                except Exception as exc:
+                    # 查询失败（已不在群）→ 移出考察
+                    self.ctx.logger.info(
+                        "[考察期] 查询成员 %s 失败（可能已退群），移出考察: %s", user_id, exc,
+                    )
+                    self._probation_remove(group_id, user_id)
+                    continue
+                data = result.get("data") if isinstance(result, dict) else None
+                if not isinstance(data, dict):
+                    self._probation_remove(group_id, user_id)
+                    continue
+                role = str(data.get("role") or "")
+                if role in ("owner", "admin"):
+                    self._probation_remove(group_id, user_id)
+                    continue
+                last_sent = data.get("last_sent_time") or 0
+                # 发过言（进群后）→ 转正
+                if isinstance(last_sent, (int, float)) and last_sent > float(entry.get("join_ts") or 0):
+                    self.ctx.logger.info(
+                        "[考察期] %s(%s) 已发言，转正", entry.get("member_name"), user_id,
+                    )
+                    self._probation_remove(group_id, user_id)
+                    continue
+                # 超时未发言 → 移出
+                if now - float(entry.get("join_ts") or 0) >= probation_seconds:
+                    await self._kick_member(group_id, user_id, entry)
+        self._probation_persist()
+
+    async def _kick_member(self, group_id: str, user_id: str, entry: dict[str, Any]) -> None:
+        """移出超时未发言成员，并发送移出说明。"""
+        cfg = self.config.probation
+        try:
+            await self.ctx.api.call(
+                "adapter.napcat.group.set_group_kick",
+                group_id=int(group_id),
+                user_id=int(user_id),
+                reject_add_request=cfg.reject_add_request,
+            )
+        except Exception as exc:
+            self.ctx.logger.info("[考察期] 移出失败 %s(%s): %s", entry.get("member_name"), user_id, exc)
+            return
+        self.ctx.logger.info(
+            "[考察期] 已移出 %s(%s) from %s（超时未发言）", entry.get("member_name"), user_id, group_id,
+        )
+        # 移出说明（直接调 API 发纯文本，不依赖 stream 解析）
+        text = await self._compose_kick_text(group_id, user_id, entry)
+        if text:
+            try:
+                await self.ctx.api.call(
+                    "adapter.napcat.group.send_group_msg",
+                    group_id=int(group_id),
+                    message=[{"type": "text", "data": {"text": text}}],
+                )
+            except Exception as exc:
+                self.ctx.logger.info("[考察期] 移出说明发送失败: %s", exc)
+        self._probation_remove(group_id, user_id)
+
+    async def _compose_kick_text(self, group_id: str, user_id: str, entry: dict[str, Any]) -> str:
+        """按配置生成移出说明（llm 优先，失败回退模板）。"""
+        cfg = self.config.probation
+        text = ""
+        if cfg.kick_message.mode == "llm":
+            text = await self._generate_text(
+                f"群成员 {entry.get('member_name') or user_id}（QQ {user_id}）加入超过 "
+                f"{cfg.probation_hours} 小时未发言，已被移出群聊。"
+                "请以你的性格自然地说明这件事（要包含被移出者的 QQ 号），简短，只输出要说的话。"
+            )
+        if not text:
+            text = (cfg.kick_message.template or "").replace(
+                "{member_name}", entry.get("member_name") or user_id,
+            ).replace("{user_id}", user_id).replace(
+                "{probation_hours}", str(cfg.probation_hours),
+            )
+        return text
+
+    async def _generate_text(self, user_prompt: str) -> str:
+        """按考察期 llm 槽位生成一句话（失败返回空串，调用方回退模板）。"""
+        cfg = self.config.probation.llm
+        persona = await self._resolve_persona()
+        system = (
+            f"{persona}\n\n"
+            "你是群里的一员，正在自然地和群友交流。"
+            "只输出要说的话本身，不要解释、不要加引号。"
+        )
+        prompt = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_prompt},
+        ]
+        try:
+            kwargs: dict[str, Any] = {"prompt": prompt, "temperature": cfg.temperature}
+            model = cfg.model.strip()
+            if model:
+                kwargs["model"] = model
+            if cfg.max_tokens > 0:
+                kwargs["max_tokens"] = cfg.max_tokens
+            result = await self.ctx.llm.generate(**kwargs)
+            return self._extract_llm_text(result)
+        except Exception:
+            self.ctx.logger.debug("[考察期] LLM 生成失败，回退模板", exc_info=True)
+            return ""
+
+    async def _send_at_message(self, group_id: str, user_id: str, text: str) -> bool:
+        """向群发送一条 @ 指定成员 + 文本的消息（直接调适配器 API，不经 LLM）。"""
+        try:
+            await self.ctx.api.call(
+                "adapter.napcat.group.send_group_msg",
+                group_id=int(group_id),
+                message=[
+                    {"type": "at", "data": {"qq": user_id}},
+                    {"type": "text", "data": {"text": text}},
+                ],
+            )
+            return True
+        except Exception as exc:
+            self.ctx.logger.info("[考察期] 发送 @ 消息失败: %s", exc)
+            return False
+
+    def _probation_remove(self, group_id: str, user_id: str) -> None:
+        """从考察名单移除一个成员（群为空时一并清理）。"""
+        members = self._probation.get(group_id)
+        if members and user_id in members:
+            del members[user_id]
+            if not members:
+                del self._probation[group_id]
+
+    def _probation_persist(self) -> None:
+        """持久化考察名单（重启不丢，超时者不会被漏踢）。"""
+        try:
+            if not self._probation_file:
+                return
+            self._probation_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._probation_file, "w", encoding="utf-8") as f:
+                json.dump(self._probation, f, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            self.ctx.logger.info("[考察期] 持久化失败: %s", exc)
+
+    def _probation_load(self) -> None:
+        """启动时加载持久化的考察名单。"""
+        try:
+            if self._probation_file and self._probation_file.exists():
+                with open(self._probation_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    self._probation = data
+        except Exception as exc:
+            self.ctx.logger.info("[考察期] 加载失败: %s", exc)
 
     async def _send_to_group(self, group_id: str, text: str) -> bool:
         stream_id = await self.resolve_stream_id_for_group(group_id)
