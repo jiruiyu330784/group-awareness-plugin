@@ -514,6 +514,51 @@ class GroupAwarenessPlugin(MaiBotPlugin):
     # ===== 工具化查询 =====
 
     @Tool(
+        "get_group_essence",
+        description="获取群精华消息列表",
+        brief_description="获取群精华消息",
+        detailed_description=(
+            "当用户询问群精华/精华消息/置顶内容时调用，返回指定群的精华消息（发送者、内容、时间）。"
+        ),
+        parameters=[
+            ToolParameterInfo(
+                name="group_id", param_type=ToolParamType.STRING,
+                description="目标群号", required=True,
+            ),
+        ],
+    )
+    async def get_group_essence(self, group_id: str, **kwargs) -> dict[str, Any]:
+        try:
+            result = await self.ctx.api.call(
+                "adapter.napcat.group.get_essence_msg_list",
+                group_id=int(group_id),
+            )
+        except Exception as e:
+            return {"success": False, "reason": str(e)}
+        if not isinstance(result, dict):
+            return {"success": False, "reason": "返回结构异常"}
+        data = result.get("data") or result.get("result") or []
+        if not isinstance(data, list) or not data:
+            return {"success": True, "result": f"群 {group_id} 暂无精华消息"}
+        lines = [f"群 {group_id} 精华消息（{len(data)} 条）："]
+        for item in data[:10]:
+            if not isinstance(item, dict):
+                continue
+            sender = str(item.get("sender_nick") or item.get("nickname") or item.get("user_id") or "")
+            content = ""
+            for seg in item.get("content") if isinstance(item.get("content"), list) else []:
+                if isinstance(seg, dict):
+                    if str(seg.get("type")) == "text":
+                        content += str(seg.get("data", {}).get("text") or "")
+                    elif str(seg.get("type")) == "image":
+                        content += "[图片]"
+            if content:
+                lines.append(f"- {sender}：{content[:80]}")
+        if len(lines) == 1:
+            return {"success": True, "result": f"群 {group_id} 暂无精华消息"}
+        return {"success": True, "result": "\n".join(lines)}
+
+    @Tool(
         "get_group_member_changes",
         description="查询群成员变动（自上次查询以来的新加入/退出成员）",
         brief_description="查询群成员变动",
